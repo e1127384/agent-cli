@@ -1,0 +1,45 @@
+agent:
+  name: "siva-local-agent"
+  require_consent_for_high_risk: true
+
+llm:
+  base_url: "http://localhost:8000/v1"
+  model: "qwen3"
+  temperature: 0.2
+  timeout_seconds: 120
+
+skills:
+  release_path: "./skills/release"
+  draft_path: "./skills/draft"
+  allow_draft_execution: false
+
+tools:
+  shell:
+    enabled: true
+    readonly_only_by_default: true
+  http:
+    enabled: true
+  file:
+    enabled: true
+    write_requires_consent: true
+
+monitor:
+  enabled: true
+  tick_seconds: 10
+  report_path: "./reports"
+
+audit:
+  log_path: "./logs/agent.log"
+
+tasks:
+  - name: "mq-health-check"
+    skill: "mq-health-check"
+    enabled: true
+    interval: "1m"
+    risk: "medium"
+
+  - name: "system-log-review"
+    skill: "system-log-review"
+    enabled: true
+    interval: "5m"
+    risk: "low"
