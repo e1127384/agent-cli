@@ -133,7 +133,11 @@ func validate(cfg *Config) error {
 			missing = append(missing, "auth.password")
 		}
 		if len(missing) > 0 {
-			return fmt.Errorf("%s are required when auth.grant_type is password", strings.Join(missing, ", "))
+			verb := "are"
+			if len(missing) == 1 {
+				verb = "is"
+			}
+			return fmt.Errorf("%s %s required when auth.grant_type is password", strings.Join(missing, ", "), verb)
 		}
 	}
 	if cfg.API.BaseURL == "" {
