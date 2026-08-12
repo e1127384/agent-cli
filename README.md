@@ -30,6 +30,14 @@ All runtime settings are in `config.yaml` (no hardcoded URLs/credentials/thresho
 - local LLM endpoint/model/temperature
 - quality gate thresholds
 
+Use environment variables for secrets (supported via `${VAR_NAME}` expansion in `config.yaml`), for example:
+
+```yaml
+auth:
+  username: "${API_USERNAME}"
+  password: "${API_PASSWORD}"
+```
+
 ## Case ID input format
 
 `input.case_ids_file` points to a plain text file with one Case ID per line.

@@ -74,7 +74,7 @@ func TestDoWithRetryRetriesOn5xx(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp, body, err := runner.doWithRetry(context.Background(), runner.apiClient, req, true)
+	resp, body, err := runner.doWithRetry(context.Background(), runner.apiClient, req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -1,7 +1,7 @@
 auth:
   endpoint: "http://localhost:9000/api/auth/login"
-  username: "your-username"
-  password: "your-password"
+  username: "${API_USERNAME}"
+  password: "${API_PASSWORD}"
 
 api:
   base_url: "http://localhost:9000/api"

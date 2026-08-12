@@ -129,9 +129,10 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
+	expanded := os.ExpandEnv(string(b))
 
 	cfg := Config{}
-	if err := yaml.Unmarshal(b, &cfg); err != nil {
+	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
 		return nil, fmt.Errorf("parse config yaml: %w", err)
 	}
 	applyDefaults(&cfg)
@@ -202,37 +203,35 @@ func validate(cfg *Config) error {
 		}
 	}
 
-	if cfg.Auth.Endpoint != "" || cfg.API.BaseURL != "" || cfg.Input.CaseIDsFile != "" {
-		if cfg.Auth.Endpoint == "" {
-			return fmt.Errorf("auth.endpoint is required")
-		}
-		if cfg.Auth.Username == "" || cfg.Auth.Password == "" {
-			return fmt.Errorf("auth.username and auth.password are required")
-		}
-		if cfg.API.BaseURL == "" {
-			return fmt.Errorf("api.base_url is required")
-		}
-		if cfg.API.CaseDetailEndpoint == "" || cfg.API.CaseSummaryEndpoint == "" {
-			return fmt.Errorf("api.case_detail_endpoint and api.case_summary_endpoint are required")
-		}
-		if cfg.Input.CaseIDsFile == "" {
-			return fmt.Errorf("input.case_ids_file is required")
-		}
-		if cfg.LLMJudge.BaseURL == "" {
-			return fmt.Errorf("llm_judge.base_url is required")
-		}
-		if cfg.LLMJudge.Model == "" {
-			return fmt.Errorf("llm_judge.model is required")
-		}
-		if err := validateThreshold("quality_thresholds.faithfulness", cfg.QualityThresholds.Faithfulness); err != nil {
-			return err
-		}
-		if err := validateThreshold("quality_thresholds.completeness", cfg.QualityThresholds.Completeness); err != nil {
-			return err
-		}
-		if err := validateThreshold("quality_thresholds.anonymity", cfg.QualityThresholds.Anonymity); err != nil {
-			return err
-		}
+	if cfg.Auth.Endpoint == "" {
+		return fmt.Errorf("auth.endpoint is required")
+	}
+	if cfg.Auth.Username == "" || cfg.Auth.Password == "" {
+		return fmt.Errorf("auth.username and auth.password are required")
+	}
+	if cfg.API.BaseURL == "" {
+		return fmt.Errorf("api.base_url is required")
+	}
+	if cfg.API.CaseDetailEndpoint == "" || cfg.API.CaseSummaryEndpoint == "" {
+		return fmt.Errorf("api.case_detail_endpoint and api.case_summary_endpoint are required")
+	}
+	if cfg.Input.CaseIDsFile == "" {
+		return fmt.Errorf("input.case_ids_file is required")
+	}
+	if cfg.LLMJudge.BaseURL == "" {
+		return fmt.Errorf("llm_judge.base_url is required")
+	}
+	if cfg.LLMJudge.Model == "" {
+		return fmt.Errorf("llm_judge.model is required")
+	}
+	if err := validateThreshold("quality_thresholds.faithfulness", cfg.QualityThresholds.Faithfulness); err != nil {
+		return err
+	}
+	if err := validateThreshold("quality_thresholds.completeness", cfg.QualityThresholds.Completeness); err != nil {
+		return err
+	}
+	if err := validateThreshold("quality_thresholds.anonymity", cfg.QualityThresholds.Anonymity); err != nil {
+		return err
 	}
 
 	return nil

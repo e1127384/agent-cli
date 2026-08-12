@@ -95,15 +95,18 @@ type chatResponse struct {
 
 func NewRunner(cfg *config.Config) *Runner {
 	connectTimeout := time.Duration(cfg.HTTP.ConnectTimeoutSeconds) * time.Second
-	transport := &http.Transport{
+	apiTransport := &http.Transport{
+		DialContext: (&net.Dialer{Timeout: connectTimeout}).DialContext,
+	}
+	judgeTransport := &http.Transport{
 		DialContext: (&net.Dialer{Timeout: connectTimeout}).DialContext,
 	}
 	apiClient := &http.Client{
-		Transport: transport,
+		Transport: apiTransport,
 		Timeout:   time.Duration(cfg.HTTP.ReadTimeoutSeconds) * time.Second,
 	}
 	judgeClient := &http.Client{
-		Transport: transport,
+		Transport: judgeTransport,
 		Timeout:   time.Duration(cfg.LLMJudge.TimeoutSeconds) * time.Second,
 	}
 	return &Runner{cfg: cfg, apiClient: apiClient, judgeClient: judgeClient}
@@ -185,7 +188,10 @@ func (r *Runner) authenticate(ctx context.Context) (string, error) {
 		"username": r.cfg.Auth.Username,
 		"password": r.cfg.Auth.Password,
 	}
-	b, _ := json.Marshal(payload)
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal auth payload: %w", err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.cfg.Auth.Endpoint, bytes.NewReader(b))
 	if err != nil {
@@ -193,11 +199,10 @@ func (r *Runner) authenticate(ctx context.Context) (string, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, body, err := r.doWithRetry(ctx, r.apiClient, req, true)
+	resp, body, err := r.doWithRetry(ctx, r.apiClient, req)
 	if err != nil {
 		return "", fmt.Errorf("authentication failed: %w", err)
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("authentication failed: status=%s body=%s", resp.Status, strings.TrimSpace(string(body)))
@@ -314,11 +319,10 @@ func (r *Runner) fetchCasePayload(ctx context.Context, token, caseID string) ([]
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, body, err := r.doWithRetry(ctx, r.apiClient, req, true)
+	resp, body, err := r.doWithRetry(ctx, r.apiClient, req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch case %s: %w", caseID, err)
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("fetch case %s: status=%s", caseID, resp.Status)
@@ -338,11 +342,10 @@ func (r *Runner) fetchSummaryText(ctx context.Context, token, caseID string) (st
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, body, err := r.doWithRetry(ctx, r.apiClient, req, true)
+	resp, body, err := r.doWithRetry(ctx, r.apiClient, req)
 	if err != nil {
 		return "", fmt.Errorf("fetch summary %s: %w", caseID, err)
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("fetch summary %s: status=%s", caseID, resp.Status)
@@ -354,6 +357,10 @@ func (r *Runner) fetchSummaryText(ctx context.Context, token, caseID string) (st
 func buildURL(base, endpointTemplate, caseID string) string {
 	replaced := strings.ReplaceAll(endpointTemplate, "{case_id}", caseID)
 	return strings.TrimRight(base, "/") + "/" + strings.TrimLeft(replaced, "/")
+}
+
+func buildServiceURL(base, endpoint string) string {
+	return strings.TrimRight(base, "/") + "/" + strings.TrimLeft(endpoint, "/")
 }
 
 func (r *Runner) evaluateCase(ctx context.Context, casePayload []byte, summary string) (AssessmentResult, error) {
@@ -386,20 +393,22 @@ Generated summary:
 		},
 		ResponseFmt: responseFmt{Type: "json_object"},
 	}
-	payload, _ := json.Marshal(body)
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return AssessmentResult{}, fmt.Errorf("marshal judge request: %w", err)
+	}
 
-	url := strings.TrimRight(r.cfg.LLMJudge.BaseURL, "/") + "/" + strings.TrimLeft(r.cfg.LLMJudge.EndpointPath, "/")
+	url := buildServiceURL(r.cfg.LLMJudge.BaseURL, r.cfg.LLMJudge.EndpointPath)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return AssessmentResult{}, fmt.Errorf("build judge request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, raw, err := r.doWithRetry(ctx, r.judgeClient, req, true)
+	resp, raw, err := r.doWithRetry(ctx, r.judgeClient, req)
 	if err != nil {
 		return AssessmentResult{}, fmt.Errorf("judge request failed: %w", err)
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return AssessmentResult{}, fmt.Errorf("judge request failed: status=%s", resp.Status)
@@ -472,10 +481,13 @@ func summarizeTotals(cases []CaseRunSummary) RunSummaryTotals {
 	return t
 }
 
-func (r *Runner) doWithRetry(ctx context.Context, client *http.Client, req *http.Request, readBody bool) (*http.Response, []byte, error) {
+func (r *Runner) doWithRetry(ctx context.Context, client *http.Client, req *http.Request) (*http.Response, []byte, error) {
 	attempts := r.cfg.HTTP.RetryMaxAttempts
 	if attempts < 1 {
 		attempts = 1
+	}
+	if attempts > 1 && req.Body != nil && req.Body != http.NoBody && req.GetBody == nil {
+		return nil, nil, fmt.Errorf("request body is not replayable for retries")
 	}
 
 	initial := time.Duration(r.cfg.HTTP.RetryInitialBackoffMS) * time.Millisecond
@@ -506,19 +518,20 @@ func (r *Runner) doWithRetry(ctx context.Context, client *http.Client, req *http
 			continue
 		}
 
-		var body []byte
-		if readBody {
-			body, err = io.ReadAll(resp.Body)
-			if err != nil {
-				resp.Body.Close()
-				if attempt == attempts {
-					return nil, nil, err
-				}
-				time.Sleep(backoffDuration(initial, maxBackoff, attempt))
-				continue
-			}
-			resp.Body = io.NopCloser(bytes.NewReader(body))
+		originalBody := resp.Body
+		body, err := io.ReadAll(originalBody)
+		closeErr := originalBody.Close()
+		if err == nil && closeErr != nil {
+			err = closeErr
 		}
+		if err != nil {
+			if attempt == attempts {
+				return nil, nil, err
+			}
+			time.Sleep(backoffDuration(initial, maxBackoff, attempt))
+			continue
+		}
+		resp.Body = io.NopCloser(bytes.NewReader(body))
 
 		if resp.StatusCode >= 500 && attempt < attempts {
 			resp.Body.Close()
