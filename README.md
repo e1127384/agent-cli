@@ -24,6 +24,7 @@ All runtime settings are in `config.yaml` (no hardcoded URLs/credentials/thresho
 
 - auth endpoint + credentials
 - API base URL + endpoint routes
+- configurable API request methods/payload templates (supports GraphQL payloads with `{case_id}` substitution)
 - timeout/retry policy
 - input case-id file
 - output base directory
@@ -39,6 +40,17 @@ auth:
   client_secret: "${API_CLIENT_SECRET}" # optional, if required by your auth server
   username: "${API_USERNAME}"
   password: "${API_PASSWORD}"
+
+api:
+  base_url: "http://localhost:9000"
+  case_detail_endpoint: "/graphql"
+  case_summary_endpoint: "/graphql"
+  case_detail_method: "POST"
+  case_summary_method: "POST"
+  case_detail_payload: '{"query":"query GetCase($caseId: String!) { case(id: $caseId) { id title details } }","variables":{"caseId":"{case_id}"}}'
+  case_summary_payload: '{"query":"query GetCaseSummary($caseId: String!) { case(id: $caseId) { summary } }","variables":{"caseId":"{case_id}"}}'
+  case_detail_response_path: "data.case"
+  case_summary_response_path: "data.case.summary"
 ```
 
 ## Case ID input format

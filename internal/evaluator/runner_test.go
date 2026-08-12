@@ -3,6 +3,7 @@ package evaluator
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -270,5 +271,89 @@ func TestAuthenticateUsesFormEncodedPayload(t *testing.T) {
 	}
 	if gotForm.Get("client_secret") != "my-secret" {
 		t.Fatalf("expected client_secret in form, got %q", gotForm.Get("client_secret"))
+	}
+}
+
+func TestFetchersSupportConfigurableGraphQLPayloads(t *testing.T) {
+	caseID := "CASE-42"
+	var detailMethod, summaryMethod, detailContentType, summaryContentType string
+	var detailBody, summaryBody string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/graphql/detail":
+			detailMethod = r.Method
+			detailContentType = r.Header.Get("Content-Type")
+			raw, _ := io.ReadAll(r.Body)
+			detailBody = string(raw)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"case":{"id":"CASE-42","detail":"x"}}}`))
+		case "/graphql/summary":
+			summaryMethod = r.Method
+			summaryContentType = r.Header.Get("Content-Type")
+			raw, _ := io.ReadAll(r.Body)
+			summaryBody = string(raw)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"case":{"summary":"graph summary"}}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	runner := NewRunner(&config.Config{
+		API: config.APIConfig{
+			BaseURL:                 server.URL,
+			CaseDetailEndpoint:      "/graphql/detail",
+			CaseSummaryEndpoint:     "/graphql/summary",
+			CaseDetailMethod:        "POST",
+			CaseSummaryMethod:       "POST",
+			CaseDetailPayload:       `{"query":"query($id:String!){case(id:$id){id detail}}","variables":{"id":"{case_id}"}}`,
+			CaseSummaryPayload:      `{"query":"query($id:String!){case(id:$id){summary}}","variables":{"id":"{case_id}"}}`,
+			CaseDetailResponsePath:  "data.case",
+			CaseSummaryResponsePath: "data.case.summary",
+		},
+		HTTP: config.HTTPConfig{
+			ConnectTimeoutSeconds: 1,
+			ReadTimeoutSeconds:    2,
+			RetryMaxAttempts:      1,
+		},
+		LLMJudge: config.LLMJudgeConfig{
+			TimeoutSeconds: 2,
+		},
+	})
+
+	casePayload, err := runner.fetchCasePayload(context.Background(), "tok", caseID)
+	if err != nil {
+		t.Fatalf("fetchCasePayload failed: %v", err)
+	}
+	if !json.Valid(casePayload) {
+		t.Fatalf("expected JSON payload, got %s", string(casePayload))
+	}
+	if detailMethod != http.MethodPost {
+		t.Fatalf("expected detail POST, got %s", detailMethod)
+	}
+	if !strings.HasPrefix(detailContentType, "application/json") {
+		t.Fatalf("expected detail content-type application/json, got %q", detailContentType)
+	}
+	if !strings.Contains(detailBody, `"id":"CASE-42"`) {
+		t.Fatalf("expected case_id substitution in detail payload, got %s", detailBody)
+	}
+
+	summaryText, err := runner.fetchSummaryText(context.Background(), "tok", caseID)
+	if err != nil {
+		t.Fatalf("fetchSummaryText failed: %v", err)
+	}
+	if summaryText != "graph summary" {
+		t.Fatalf("expected summary text 'graph summary', got %q", summaryText)
+	}
+	if summaryMethod != http.MethodPost {
+		t.Fatalf("expected summary POST, got %s", summaryMethod)
+	}
+	if !strings.HasPrefix(summaryContentType, "application/json") {
+		t.Fatalf("expected summary content-type application/json, got %q", summaryContentType)
+	}
+	if !strings.Contains(summaryBody, `"id":"CASE-42"`) {
+		t.Fatalf("expected case_id substitution in summary payload, got %s", summaryBody)
 	}
 }

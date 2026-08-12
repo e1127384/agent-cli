@@ -28,9 +28,15 @@ type AuthConfig struct {
 }
 
 type APIConfig struct {
-	BaseURL             string `yaml:"base_url"`
-	CaseDetailEndpoint  string `yaml:"case_detail_endpoint"`
-	CaseSummaryEndpoint string `yaml:"case_summary_endpoint"`
+	BaseURL                  string `yaml:"base_url"`
+	CaseDetailEndpoint       string `yaml:"case_detail_endpoint"`
+	CaseSummaryEndpoint      string `yaml:"case_summary_endpoint"`
+	CaseDetailMethod         string `yaml:"case_detail_method"`
+	CaseSummaryMethod        string `yaml:"case_summary_method"`
+	CaseDetailPayload        string `yaml:"case_detail_payload"`
+	CaseSummaryPayload       string `yaml:"case_summary_payload"`
+	CaseDetailResponsePath   string `yaml:"case_detail_response_path"`
+	CaseSummaryResponsePath  string `yaml:"case_summary_response_path"`
 }
 
 type HTTPConfig struct {
@@ -105,6 +111,12 @@ func applyDefaults(cfg *Config) {
 	if cfg.Output.BaseDir == "" {
 		cfg.Output.BaseDir = "./runs"
 	}
+	if cfg.API.CaseDetailMethod == "" {
+		cfg.API.CaseDetailMethod = "GET"
+	}
+	if cfg.API.CaseSummaryMethod == "" {
+		cfg.API.CaseSummaryMethod = "GET"
+	}
 
 	if cfg.LLMJudge.EndpointPath == "" {
 		cfg.LLMJudge.EndpointPath = "/v1/chat/completions"
@@ -145,6 +157,12 @@ func validate(cfg *Config) error {
 	}
 	if cfg.API.CaseDetailEndpoint == "" || cfg.API.CaseSummaryEndpoint == "" {
 		return fmt.Errorf("api.case_detail_endpoint and api.case_summary_endpoint are required")
+	}
+	if strings.EqualFold(strings.TrimSpace(cfg.API.CaseDetailMethod), "POST") && cfg.API.CaseDetailPayload == "" {
+		return fmt.Errorf("api.case_detail_payload is required when api.case_detail_method is POST")
+	}
+	if strings.EqualFold(strings.TrimSpace(cfg.API.CaseSummaryMethod), "POST") && cfg.API.CaseSummaryPayload == "" {
+		return fmt.Errorf("api.case_summary_payload is required when api.case_summary_method is POST")
 	}
 	if cfg.Input.CaseIDsFile == "" {
 		return fmt.Errorf("input.case_ids_file is required")

@@ -7,9 +7,15 @@ auth:
   password: "${API_PASSWORD}"
 
 api:
-  base_url: "http://localhost:9000/api"
-  case_detail_endpoint: "/cases/{case_id}"
-  case_summary_endpoint: "/cases/{case_id}/summary"
+  base_url: "http://localhost:9000"
+  case_detail_endpoint: "/graphql"
+  case_summary_endpoint: "/graphql"
+  case_detail_method: "POST"
+  case_summary_method: "POST"
+  case_detail_payload: '{"query":"query GetCase($caseId: String!) { case(id: $caseId) { id title details } }","variables":{"caseId":"{case_id}"}}'
+  case_summary_payload: '{"query":"query GetCaseSummary($caseId: String!) { case(id: $caseId) { summary } }","variables":{"caseId":"{case_id}"}}'
+  case_detail_response_path: "data.case"
+  case_summary_response_path: "data.case.summary"
 
 http:
   connect_timeout_seconds: 10
