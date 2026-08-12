@@ -3,10 +3,13 @@ package evaluator
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"agent-cli/internal/config"
@@ -139,9 +142,11 @@ func TestRunContinuesAfterSingleCaseFailure(t *testing.T) {
 
 	cfg := &config.Config{
 		Auth: config.AuthConfig{
-			Endpoint: server.URL + "/auth",
-			Username: "u",
-			Password: "p",
+			Endpoint:  server.URL + "/auth",
+			GrantType: "password",
+			ClientID:  "cid",
+			Username:  "u",
+			Password:  "p",
 		},
 		API: config.APIConfig{
 			BaseURL:             server.URL + "/api",
@@ -204,5 +209,161 @@ func TestRunContinuesAfterSingleCaseFailure(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(runDir, "CASE1", "assessment.json")); err != nil {
 		t.Fatalf("missing CASE1 assessment.json: %v", err)
+	}
+}
+
+func TestAuthenticateUsesFormEncodedPayload(t *testing.T) {
+	var gotContentType string
+	var gotForm url.Values
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("Content-Type")
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		gotForm = r.Form
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"tok"}`))
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Auth: config.AuthConfig{
+			Endpoint:     server.URL,
+			GrantType:    "custom_password_grant",
+			ClientID:     "my-client",
+			ClientSecret: "my-secret",
+			Username:     "alice",
+			Password:     "s3cr3t",
+		},
+		HTTP: config.HTTPConfig{
+			ConnectTimeoutSeconds: 1,
+			ReadTimeoutSeconds:    2,
+			RetryMaxAttempts:      1,
+		},
+		LLMJudge: config.LLMJudgeConfig{
+			TimeoutSeconds: 2,
+		},
+	}
+
+	runner := NewRunner(cfg)
+	token, err := runner.authenticate(context.Background())
+	if err != nil {
+		t.Fatalf("authenticate failed: %v", err)
+	}
+	if token != "tok" {
+		t.Fatalf("expected token tok, got %q", token)
+	}
+	if !strings.HasPrefix(gotContentType, "application/x-www-form-urlencoded") {
+		t.Fatalf("expected form content type, got %q", gotContentType)
+	}
+	if gotForm.Get("grant_type") != "custom_password_grant" {
+		t.Fatalf("expected grant_type in form, got %q", gotForm.Get("grant_type"))
+	}
+	if gotForm.Get("client_id") != "my-client" {
+		t.Fatalf("expected client_id in form, got %q", gotForm.Get("client_id"))
+	}
+	if gotForm.Get("username") != "alice" {
+		t.Fatalf("expected username in form, got %q", gotForm.Get("username"))
+	}
+	if gotForm.Get("password") != "s3cr3t" {
+		t.Fatalf("expected password in form, got %q", gotForm.Get("password"))
+	}
+	if gotForm.Get("client_secret") != "my-secret" {
+		t.Fatalf("expected client_secret in form, got %q", gotForm.Get("client_secret"))
+	}
+}
+
+func TestFetchersSupportConfigurableGraphQLPayloads(t *testing.T) {
+	caseID := "CASE-42"
+	var detailMethod, summaryMethod, detailContentType, summaryContentType string
+	var detailBody, summaryBody string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/graphql/detail":
+			detailMethod = r.Method
+			detailContentType = r.Header.Get("Content-Type")
+			raw, _ := io.ReadAll(r.Body)
+			detailBody = string(raw)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"case":{"id":"CASE-42","detail":"x"}}}`))
+		case "/graphql/summary":
+			summaryMethod = r.Method
+			summaryContentType = r.Header.Get("Content-Type")
+			raw, _ := io.ReadAll(r.Body)
+			summaryBody = string(raw)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"case":{"summary":"graph summary"}}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	runner := NewRunner(&config.Config{
+		API: config.APIConfig{
+			BaseURL:                 server.URL,
+			CaseDetailEndpoint:      "/graphql/detail",
+			CaseSummaryEndpoint:     "/graphql/summary",
+			CaseDetailMethod:        "POST",
+			CaseSummaryMethod:       "POST",
+			CaseDetailPayload:       `{"query":"query($id:String!){case(id:$id){id detail}}","variables":{"id":"{case_id}"}}`,
+			CaseSummaryPayload:      `{"query":"query($id:String!){case(id:$id){summary}}","variables":{"id":"{case_id}"}}`,
+			CaseDetailResponsePath:  "data.case",
+			CaseSummaryResponsePath: "data.case.summary",
+		},
+		HTTP: config.HTTPConfig{
+			ConnectTimeoutSeconds: 1,
+			ReadTimeoutSeconds:    2,
+			RetryMaxAttempts:      1,
+		},
+		LLMJudge: config.LLMJudgeConfig{
+			TimeoutSeconds: 2,
+		},
+	})
+
+	casePayload, err := runner.fetchCasePayload(context.Background(), "tok", caseID)
+	if err != nil {
+		t.Fatalf("fetchCasePayload failed: %v", err)
+	}
+	if !json.Valid(casePayload) {
+		t.Fatalf("expected JSON payload, got %s", string(casePayload))
+	}
+	if detailMethod != http.MethodPost {
+		t.Fatalf("expected detail POST, got %s", detailMethod)
+	}
+	if !strings.HasPrefix(detailContentType, "application/json") {
+		t.Fatalf("expected detail content-type application/json, got %q", detailContentType)
+	}
+	if !strings.Contains(detailBody, `"variables":{"id":"CASE-42"}`) {
+		t.Fatalf("expected case_id substitution in detail payload, got %s", detailBody)
+	}
+
+	summaryText, err := runner.fetchSummaryText(context.Background(), "tok", caseID)
+	if err != nil {
+		t.Fatalf("fetchSummaryText failed: %v", err)
+	}
+	if summaryText != "graph summary" {
+		t.Fatalf("expected summary text 'graph summary', got %q", summaryText)
+	}
+	if summaryMethod != http.MethodPost {
+		t.Fatalf("expected summary POST, got %s", summaryMethod)
+	}
+	if !strings.HasPrefix(summaryContentType, "application/json") {
+		t.Fatalf("expected summary content-type application/json, got %q", summaryContentType)
+	}
+	if !strings.Contains(summaryBody, `"variables":{"id":"CASE-42"}`) {
+		t.Fatalf("expected case_id substitution in summary payload, got %s", summaryBody)
+	}
+}
+
+func TestExtractJSONPathRejectsEmptySegments(t *testing.T) {
+	_, err := extractJSONPath([]byte(`{"data":{"case":{"id":"CASE-1"}}}`), "data..case")
+	if err == nil {
+		t.Fatal("expected error for invalid response path")
+	}
+	if !strings.Contains(err.Error(), "contains empty segment") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

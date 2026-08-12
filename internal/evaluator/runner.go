@@ -10,6 +10,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -184,20 +185,20 @@ func createRunDirectory(base string, now time.Time) (string, error) {
 }
 
 func (r *Runner) authenticate(ctx context.Context) (string, error) {
-	payload := map[string]string{
-		"username": r.cfg.Auth.Username,
-		"password": r.cfg.Auth.Password,
-	}
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return "", fmt.Errorf("marshal auth payload: %w", err)
+	form := url.Values{}
+	form.Set("grant_type", r.cfg.Auth.GrantType)
+	form.Set("client_id", r.cfg.Auth.ClientID)
+	form.Set("username", r.cfg.Auth.Username)
+	form.Set("password", r.cfg.Auth.Password)
+	if r.cfg.Auth.ClientSecret != "" {
+		form.Set("client_secret", r.cfg.Auth.ClientSecret)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.cfg.Auth.Endpoint, bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.cfg.Auth.Endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", fmt.Errorf("build auth request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, body, err := r.doWithRetry(ctx, r.apiClient, req)
 	if err != nil {
@@ -312,12 +313,10 @@ func safeCaseDir(caseID string) string {
 }
 
 func (r *Runner) fetchCasePayload(ctx context.Context, token, caseID string) ([]byte, error) {
-	url := buildURL(r.cfg.API.BaseURL, r.cfg.API.CaseDetailEndpoint, caseID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := buildAPIRequest(ctx, r.cfg.API.BaseURL, r.cfg.API.CaseDetailEndpoint, r.cfg.API.CaseDetailMethod, r.cfg.API.CaseDetailPayload, "api.case_detail_payload", token, caseID)
 	if err != nil {
 		return nil, fmt.Errorf("build case request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, body, err := r.doWithRetry(ctx, r.apiClient, req)
 	if err != nil {
@@ -331,16 +330,25 @@ func (r *Runner) fetchCasePayload(ctx context.Context, token, caseID string) ([]
 	if !json.Valid(body) {
 		return nil, fmt.Errorf("fetch case %s: response is not valid JSON", caseID)
 	}
+	if r.cfg.API.CaseDetailResponsePath != "" {
+		selected, err := extractJSONPath(body, r.cfg.API.CaseDetailResponsePath)
+		if err != nil {
+			return nil, fmt.Errorf("fetch case %s: %w", caseID, err)
+		}
+		out, err := json.Marshal(selected)
+		if err != nil {
+			return nil, fmt.Errorf("fetch case %s: marshal selected case payload: %w", caseID, err)
+		}
+		return out, nil
+	}
 	return body, nil
 }
 
 func (r *Runner) fetchSummaryText(ctx context.Context, token, caseID string) (string, error) {
-	url := buildURL(r.cfg.API.BaseURL, r.cfg.API.CaseSummaryEndpoint, caseID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := buildAPIRequest(ctx, r.cfg.API.BaseURL, r.cfg.API.CaseSummaryEndpoint, r.cfg.API.CaseSummaryMethod, r.cfg.API.CaseSummaryPayload, "api.case_summary_payload", token, caseID)
 	if err != nil {
 		return "", fmt.Errorf("build summary request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, body, err := r.doWithRetry(ctx, r.apiClient, req)
 	if err != nil {
@@ -350,6 +358,17 @@ func (r *Runner) fetchSummaryText(ctx context.Context, token, caseID string) (st
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("fetch summary %s: status=%s", caseID, resp.Status)
 	}
+	if r.cfg.API.CaseSummaryResponsePath != "" {
+		selected, err := extractJSONPath(body, r.cfg.API.CaseSummaryResponsePath)
+		if err != nil {
+			return "", fmt.Errorf("fetch summary %s: %w", caseID, err)
+		}
+		s, ok := selected.(string)
+		if !ok {
+			return "", fmt.Errorf("fetch summary %s: selected response value at %q is not a string", caseID, r.cfg.API.CaseSummaryResponsePath)
+		}
+		return strings.TrimSpace(s), nil
+	}
 
 	return strings.TrimSpace(string(body)), nil
 }
@@ -357,6 +376,73 @@ func (r *Runner) fetchSummaryText(ctx context.Context, token, caseID string) (st
 func buildURL(base, endpointTemplate, caseID string) string {
 	replaced := strings.ReplaceAll(endpointTemplate, "{case_id}", caseID)
 	return strings.TrimRight(base, "/") + "/" + strings.TrimLeft(replaced, "/")
+}
+
+func buildAPIRequest(ctx context.Context, baseURL, endpoint, method, payloadTemplate, payloadFieldName, token, caseID string) (*http.Request, error) {
+	httpMethod := strings.ToUpper(strings.TrimSpace(method))
+	if httpMethod == "" {
+		httpMethod = http.MethodGet
+	}
+
+	url := buildURL(baseURL, endpoint, caseID)
+	switch httpMethod {
+	case http.MethodGet:
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		return req, nil
+	case http.MethodPost:
+		payload, err := renderCasePayload(payloadTemplate, payloadFieldName, caseID)
+		if err != nil {
+			return nil, err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(payload))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		return req, nil
+	default:
+		return nil, fmt.Errorf("unsupported API method %q", httpMethod)
+	}
+}
+
+func renderCasePayload(payloadTemplate, payloadFieldName, caseID string) (string, error) {
+	if strings.TrimSpace(payloadTemplate) == "" {
+		return "", fmt.Errorf("%s is required for POST requests", payloadFieldName)
+	}
+	if !strings.Contains(payloadTemplate, "{case_id}") {
+		return "", fmt.Errorf("%s must include {case_id}", payloadFieldName)
+	}
+	return strings.ReplaceAll(payloadTemplate, "{case_id}", caseID), nil
+}
+
+func extractJSONPath(raw []byte, path string) (any, error) {
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return nil, fmt.Errorf("response is not valid JSON: %w", err)
+	}
+
+	current := decoded
+	for _, key := range strings.Split(path, ".") {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return nil, fmt.Errorf("response path %q contains empty segment", path)
+		}
+		obj, ok := current.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("response path %q is invalid: segment %q does not reference an object", path, key)
+		}
+		next, ok := obj[key]
+		if !ok {
+			return nil, fmt.Errorf("response path %q not found", path)
+		}
+		current = next
+	}
+	return current, nil
 }
 
 func buildServiceURL(base, endpoint string) string {
