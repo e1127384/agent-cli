@@ -336,7 +336,7 @@ func TestFetchersSupportConfigurableGraphQLPayloads(t *testing.T) {
 	if !strings.HasPrefix(detailContentType, "application/json") {
 		t.Fatalf("expected detail content-type application/json, got %q", detailContentType)
 	}
-	if !strings.Contains(detailBody, `"id":"CASE-42"`) {
+	if !strings.Contains(detailBody, `"variables":{"id":"CASE-42"}`) {
 		t.Fatalf("expected case_id substitution in detail payload, got %s", detailBody)
 	}
 
@@ -353,7 +353,17 @@ func TestFetchersSupportConfigurableGraphQLPayloads(t *testing.T) {
 	if !strings.HasPrefix(summaryContentType, "application/json") {
 		t.Fatalf("expected summary content-type application/json, got %q", summaryContentType)
 	}
-	if !strings.Contains(summaryBody, `"id":"CASE-42"`) {
+	if !strings.Contains(summaryBody, `"variables":{"id":"CASE-42"}`) {
 		t.Fatalf("expected case_id substitution in summary payload, got %s", summaryBody)
+	}
+}
+
+func TestExtractJSONPathRejectsEmptySegments(t *testing.T) {
+	_, err := extractJSONPath([]byte(`{"data":{"case":{"id":"CASE-1"}}}`), "data..case")
+	if err == nil {
+		t.Fatal("expected error for invalid response path")
+	}
+	if !strings.Contains(err.Error(), "contains empty segment") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

@@ -88,6 +88,7 @@ func Load(path string) (*Config, error) {
 }
 
 func applyDefaults(cfg *Config) {
+	cfg.Auth.GrantType = strings.TrimSpace(cfg.Auth.GrantType)
 	if cfg.Auth.GrantType == "" {
 		cfg.Auth.GrantType = "password"
 	}
@@ -111,9 +112,11 @@ func applyDefaults(cfg *Config) {
 	if cfg.Output.BaseDir == "" {
 		cfg.Output.BaseDir = "./runs"
 	}
+	cfg.API.CaseDetailMethod = strings.ToUpper(strings.TrimSpace(cfg.API.CaseDetailMethod))
 	if cfg.API.CaseDetailMethod == "" {
 		cfg.API.CaseDetailMethod = "GET"
 	}
+	cfg.API.CaseSummaryMethod = strings.ToUpper(strings.TrimSpace(cfg.API.CaseSummaryMethod))
 	if cfg.API.CaseSummaryMethod == "" {
 		cfg.API.CaseSummaryMethod = "GET"
 	}
@@ -133,7 +136,7 @@ func validate(cfg *Config) error {
 	if cfg.Auth.GrantType == "" {
 		return fmt.Errorf("auth.grant_type is required")
 	}
-	if strings.EqualFold(strings.TrimSpace(cfg.Auth.GrantType), "password") {
+	if strings.EqualFold(cfg.Auth.GrantType, "password") {
 		missing := make([]string, 0, 3)
 		if cfg.Auth.ClientID == "" {
 			missing = append(missing, "auth.client_id")
@@ -158,11 +161,21 @@ func validate(cfg *Config) error {
 	if cfg.API.CaseDetailEndpoint == "" || cfg.API.CaseSummaryEndpoint == "" {
 		return fmt.Errorf("api.case_detail_endpoint and api.case_summary_endpoint are required")
 	}
-	if strings.EqualFold(strings.TrimSpace(cfg.API.CaseDetailMethod), "POST") && cfg.API.CaseDetailPayload == "" {
+	if cfg.API.CaseDetailMethod == "POST" && cfg.API.CaseDetailPayload == "" {
 		return fmt.Errorf("api.case_detail_payload is required when api.case_detail_method is POST")
 	}
-	if strings.EqualFold(strings.TrimSpace(cfg.API.CaseSummaryMethod), "POST") && cfg.API.CaseSummaryPayload == "" {
+	if cfg.API.CaseSummaryMethod == "POST" && cfg.API.CaseSummaryPayload == "" {
 		return fmt.Errorf("api.case_summary_payload is required when api.case_summary_method is POST")
+	}
+	if cfg.API.CaseDetailMethod == "POST" &&
+		cfg.API.CaseDetailPayload != "" &&
+		!strings.Contains(cfg.API.CaseDetailPayload, "{case_id}") {
+		return fmt.Errorf("api.case_detail_payload must include {case_id} when api.case_detail_method is POST")
+	}
+	if cfg.API.CaseSummaryMethod == "POST" &&
+		cfg.API.CaseSummaryPayload != "" &&
+		!strings.Contains(cfg.API.CaseSummaryPayload, "{case_id}") {
+		return fmt.Errorf("api.case_summary_payload must include {case_id} when api.case_summary_method is POST")
 	}
 	if cfg.Input.CaseIDsFile == "" {
 		return fmt.Errorf("input.case_ids_file is required")
