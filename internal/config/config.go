@@ -3,75 +3,125 @@ package config
 import (
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	Agent   AgentConfig
-	LLM     LLMConfig
-	Skills  SkillsConfig
-	Tools   ToolsConfig
-	Monitor MonitorConfig
-	Audit   AuditConfig
-	Tasks   []TaskConfig
+	Agent   AgentConfig   `yaml:"agent"`
+	LLM     LLMConfig     `yaml:"llm"`
+	Skills  SkillsConfig  `yaml:"skills"`
+	Tools   ToolsConfig   `yaml:"tools"`
+	Monitor MonitorConfig `yaml:"monitor"`
+	Audit   AuditConfig   `yaml:"audit"`
+	Tasks   []TaskConfig  `yaml:"tasks"`
+
+	Auth              AuthConfig              `yaml:"auth"`
+	API               APIConfig               `yaml:"api"`
+	HTTP              HTTPConfig              `yaml:"http"`
+	Input             InputConfig             `yaml:"input"`
+	Output            OutputConfig            `yaml:"output"`
+	LLMJudge          LLMJudgeConfig          `yaml:"llm_judge"`
+	QualityThresholds QualityThresholdsConfig `yaml:"quality_thresholds"`
 }
 
 type AgentConfig struct {
-	Name                      string
-	RequireConsentForHighRisk bool
+	Name                      string `yaml:"name"`
+	RequireConsentForHighRisk bool   `yaml:"require_consent_for_high_risk"`
 }
 
 type LLMConfig struct {
-	BaseURL        string
-	Model          string
-	Temperature    float64
-	TimeoutSeconds int
+	BaseURL        string  `yaml:"base_url"`
+	Model          string  `yaml:"model"`
+	Temperature    float64 `yaml:"temperature"`
+	TimeoutSeconds int     `yaml:"timeout_seconds"`
 }
 
 type SkillsConfig struct {
-	ReleasePath         string
-	DraftPath           string
-	AllowDraftExecution bool
+	ReleasePath         string `yaml:"release_path"`
+	DraftPath           string `yaml:"draft_path"`
+	AllowDraftExecution bool   `yaml:"allow_draft_execution"`
 }
 
 type ToolsConfig struct {
-	Shell ShellToolConfig
-	HTTP  HTTPToolConfig
-	File  FileToolConfig
+	Shell ShellToolConfig `yaml:"shell"`
+	HTTP  HTTPToolConfig  `yaml:"http"`
+	File  FileToolConfig  `yaml:"file"`
 }
 
 type ShellToolConfig struct {
-	Enabled               bool
-	ReadonlyOnlyByDefault bool
+	Enabled               bool `yaml:"enabled"`
+	ReadonlyOnlyByDefault bool `yaml:"readonly_only_by_default"`
 }
 
 type HTTPToolConfig struct {
-	Enabled bool
+	Enabled bool `yaml:"enabled"`
 }
 
 type FileToolConfig struct {
-	Enabled              bool
-	WriteRequiresConsent bool
+	Enabled              bool `yaml:"enabled"`
+	WriteRequiresConsent bool `yaml:"write_requires_consent"`
 }
 
 type MonitorConfig struct {
-	Enabled     bool
-	TickSeconds int
-	ReportPath  string
+	Enabled     bool   `yaml:"enabled"`
+	TickSeconds int    `yaml:"tick_seconds"`
+	ReportPath  string `yaml:"report_path"`
 }
 
 type AuditConfig struct {
-	LogPath string
+	LogPath string `yaml:"log_path"`
 }
 
 type TaskConfig struct {
-	Name     string
-	Skill    string
-	Enabled  bool
-	Interval string
-	Risk     string
+	Name     string `yaml:"name"`
+	Skill    string `yaml:"skill"`
+	Enabled  bool   `yaml:"enabled"`
+	Interval string `yaml:"interval"`
+	Risk     string `yaml:"risk"`
+}
+
+type AuthConfig struct {
+	Endpoint string `yaml:"endpoint"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
+type APIConfig struct {
+	BaseURL             string `yaml:"base_url"`
+	CaseDetailEndpoint  string `yaml:"case_detail_endpoint"`
+	CaseSummaryEndpoint string `yaml:"case_summary_endpoint"`
+}
+
+type HTTPConfig struct {
+	ConnectTimeoutSeconds   int `yaml:"connect_timeout_seconds"`
+	ReadTimeoutSeconds      int `yaml:"read_timeout_seconds"`
+	RetryMaxAttempts        int `yaml:"retry_max_attempts"`
+	RetryInitialBackoffMS   int `yaml:"retry_initial_backoff_ms"`
+	RetryMaxBackoffMS       int `yaml:"retry_max_backoff_ms"`
+}
+
+type InputConfig struct {
+	CaseIDsFile string `yaml:"case_ids_file"`
+}
+
+type OutputConfig struct {
+	BaseDir string `yaml:"base_dir"`
+}
+
+type LLMJudgeConfig struct {
+	BaseURL        string  `yaml:"base_url"`
+	EndpointPath   string  `yaml:"endpoint_path"`
+	Model          string  `yaml:"model"`
+	Temperature    float64 `yaml:"temperature"`
+	TimeoutSeconds int     `yaml:"timeout_seconds"`
+}
+
+type QualityThresholdsConfig struct {
+	Faithfulness int `yaml:"faithfulness"`
+	Completeness int `yaml:"completeness"`
+	Anonymity    int `yaml:"anonymity"`
 }
 
 func Load(path string) (*Config, error) {
@@ -79,10 +129,11 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
+	expanded := os.ExpandEnv(string(b))
+
 	cfg := Config{}
-	applyDefaults(&cfg)
-	if err := parseSimpleYAML(string(b), &cfg); err != nil {
-		return nil, err
+	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
+		return nil, fmt.Errorf("parse config yaml: %w", err)
 	}
 	applyDefaults(&cfg)
 	if err := validate(&cfg); err != nil {
@@ -98,13 +149,13 @@ func applyDefaults(cfg *Config) {
 	if cfg.LLM.Model == "" {
 		cfg.LLM.Model = "qwen3"
 	}
-	if cfg.LLM.TimeoutSeconds == 0 {
+	if cfg.LLM.TimeoutSeconds <= 0 {
 		cfg.LLM.TimeoutSeconds = 120
 	}
 	if cfg.Skills.ReleasePath == "" {
 		cfg.Skills.ReleasePath = "./skills/release"
 	}
-	if cfg.Monitor.TickSeconds == 0 {
+	if cfg.Monitor.TickSeconds <= 0 {
 		cfg.Monitor.TickSeconds = 10
 	}
 	if cfg.Monitor.ReportPath == "" {
@@ -112,6 +163,33 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Audit.LogPath == "" {
 		cfg.Audit.LogPath = "./logs/agent.log"
+	}
+
+	if cfg.HTTP.ConnectTimeoutSeconds <= 0 {
+		cfg.HTTP.ConnectTimeoutSeconds = 10
+	}
+	if cfg.HTTP.ReadTimeoutSeconds <= 0 {
+		cfg.HTTP.ReadTimeoutSeconds = 30
+	}
+	if cfg.HTTP.RetryMaxAttempts <= 0 {
+		cfg.HTTP.RetryMaxAttempts = 3
+	}
+	if cfg.HTTP.RetryInitialBackoffMS <= 0 {
+		cfg.HTTP.RetryInitialBackoffMS = 500
+	}
+	if cfg.HTTP.RetryMaxBackoffMS <= 0 {
+		cfg.HTTP.RetryMaxBackoffMS = 5000
+	}
+
+	if cfg.Output.BaseDir == "" {
+		cfg.Output.BaseDir = "./runs"
+	}
+
+	if cfg.LLMJudge.EndpointPath == "" {
+		cfg.LLMJudge.EndpointPath = "/v1/chat/completions"
+	}
+	if cfg.LLMJudge.TimeoutSeconds <= 0 {
+		cfg.LLMJudge.TimeoutSeconds = cfg.HTTP.ReadTimeoutSeconds
 	}
 }
 
@@ -124,210 +202,44 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("invalid interval for task %s: %w", t.Name, err)
 		}
 	}
+
+	if cfg.Auth.Endpoint == "" {
+		return fmt.Errorf("auth.endpoint is required")
+	}
+	if cfg.Auth.Username == "" || cfg.Auth.Password == "" {
+		return fmt.Errorf("auth.username and auth.password are required")
+	}
+	if cfg.API.BaseURL == "" {
+		return fmt.Errorf("api.base_url is required")
+	}
+	if cfg.API.CaseDetailEndpoint == "" || cfg.API.CaseSummaryEndpoint == "" {
+		return fmt.Errorf("api.case_detail_endpoint and api.case_summary_endpoint are required")
+	}
+	if cfg.Input.CaseIDsFile == "" {
+		return fmt.Errorf("input.case_ids_file is required")
+	}
+	if cfg.LLMJudge.BaseURL == "" {
+		return fmt.Errorf("llm_judge.base_url is required")
+	}
+	if cfg.LLMJudge.Model == "" {
+		return fmt.Errorf("llm_judge.model is required")
+	}
+	if err := validateThreshold("quality_thresholds.faithfulness", cfg.QualityThresholds.Faithfulness); err != nil {
+		return err
+	}
+	if err := validateThreshold("quality_thresholds.completeness", cfg.QualityThresholds.Completeness); err != nil {
+		return err
+	}
+	if err := validateThreshold("quality_thresholds.anonymity", cfg.QualityThresholds.Anonymity); err != nil {
+		return err
+	}
+
 	return nil
 }
 
-func parseSimpleYAML(input string, cfg *Config) error {
-	section := ""
-	subsection := ""
-	var currentTask *TaskConfig
-
-	for lineNo, raw := range strings.Split(input, "\n") {
-		line := stripComment(raw)
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		indent := countIndent(line)
-		trim := strings.TrimSpace(line)
-
-		if indent == 0 && strings.HasSuffix(trim, ":") {
-			section = strings.TrimSuffix(trim, ":")
-			subsection = ""
-			currentTask = nil
-			continue
-		}
-
-		if section == "tasks" {
-			if strings.HasPrefix(trim, "- ") {
-				task := TaskConfig{}
-				cfg.Tasks = append(cfg.Tasks, task)
-				currentTask = &cfg.Tasks[len(cfg.Tasks)-1]
-				kv := strings.TrimSpace(strings.TrimPrefix(trim, "- "))
-				if kv != "" {
-					k, v, ok := splitKV(kv)
-					if !ok {
-						return fmt.Errorf("invalid task line %d", lineNo+1)
-					}
-					setTaskField(currentTask, k, v)
-				}
-				continue
-			}
-			if currentTask == nil {
-				return fmt.Errorf("task field before task item line %d", lineNo+1)
-			}
-			k, v, ok := splitKV(trim)
-			if !ok {
-				return fmt.Errorf("invalid task field line %d", lineNo+1)
-			}
-			setTaskField(currentTask, k, v)
-			continue
-		}
-
-		if indent == 2 && strings.HasSuffix(trim, ":") {
-			subsection = strings.TrimSuffix(trim, ":")
-			continue
-		}
-
-		k, v, ok := splitKV(trim)
-		if !ok {
-			return fmt.Errorf("invalid config line %d: %s", lineNo+1, trim)
-		}
-		if indent == 2 {
-			setSectionField(cfg, section, k, v)
-		} else if indent == 4 {
-			setSubsectionField(cfg, section, subsection, k, v)
-		}
+func validateThreshold(name string, v int) error {
+	if v < 1 || v > 5 {
+		return fmt.Errorf("%s must be between 1 and 5", name)
 	}
 	return nil
-}
-
-func stripComment(s string) string {
-	inQuote := false
-	for i, r := range s {
-		if r == '"' {
-			inQuote = !inQuote
-		}
-		if r == '#' && !inQuote {
-			return s[:i]
-		}
-	}
-	return s
-}
-
-func countIndent(s string) int {
-	count := 0
-	for _, r := range s {
-		if r == ' ' {
-			count++
-		} else {
-			break
-		}
-	}
-	return count
-}
-
-func splitKV(s string) (string, string, bool) {
-	parts := strings.SplitN(s, ":", 2)
-	if len(parts) != 2 {
-		return "", "", false
-	}
-	return strings.TrimSpace(parts[0]), cleanValue(parts[1]), true
-}
-
-func cleanValue(s string) string {
-	s = strings.TrimSpace(s)
-	s = strings.Trim(s, "\"")
-	s = strings.Trim(s, "'")
-	return s
-}
-
-func parseBool(s string) bool {
-	b, _ := strconv.ParseBool(s)
-	return b
-}
-
-func parseInt(s string) int {
-	i, _ := strconv.Atoi(s)
-	return i
-}
-
-func parseFloat(s string) float64 {
-	f, _ := strconv.ParseFloat(s, 64)
-	return f
-}
-
-func setSectionField(cfg *Config, section, key, value string) {
-	switch section {
-	case "agent":
-		switch key {
-		case "name":
-			cfg.Agent.Name = value
-		case "require_consent_for_high_risk":
-			cfg.Agent.RequireConsentForHighRisk = parseBool(value)
-		}
-	case "llm":
-		switch key {
-		case "base_url":
-			cfg.LLM.BaseURL = value
-		case "model":
-			cfg.LLM.Model = value
-		case "temperature":
-			cfg.LLM.Temperature = parseFloat(value)
-		case "timeout_seconds":
-			cfg.LLM.TimeoutSeconds = parseInt(value)
-		}
-	case "skills":
-		switch key {
-		case "release_path":
-			cfg.Skills.ReleasePath = value
-		case "draft_path":
-			cfg.Skills.DraftPath = value
-		case "allow_draft_execution":
-			cfg.Skills.AllowDraftExecution = parseBool(value)
-		}
-	case "monitor":
-		switch key {
-		case "enabled":
-			cfg.Monitor.Enabled = parseBool(value)
-		case "tick_seconds":
-			cfg.Monitor.TickSeconds = parseInt(value)
-		case "report_path":
-			cfg.Monitor.ReportPath = value
-		}
-	case "audit":
-		if key == "log_path" {
-			cfg.Audit.LogPath = value
-		}
-	}
-}
-
-func setSubsectionField(cfg *Config, section, subsection, key, value string) {
-	if section != "tools" {
-		return
-	}
-	switch subsection {
-	case "shell":
-		switch key {
-		case "enabled":
-			cfg.Tools.Shell.Enabled = parseBool(value)
-		case "readonly_only_by_default":
-			cfg.Tools.Shell.ReadonlyOnlyByDefault = parseBool(value)
-		}
-	case "http":
-		if key == "enabled" {
-			cfg.Tools.HTTP.Enabled = parseBool(value)
-		}
-	case "file":
-		switch key {
-		case "enabled":
-			cfg.Tools.File.Enabled = parseBool(value)
-		case "write_requires_consent":
-			cfg.Tools.File.WriteRequiresConsent = parseBool(value)
-		}
-	}
-}
-
-func setTaskField(t *TaskConfig, key, value string) {
-	switch key {
-	case "name":
-		t.Name = value
-	case "skill":
-		t.Skill = value
-	case "enabled":
-		t.Enabled = parseBool(value)
-	case "interval":
-		t.Interval = value
-	case "risk":
-		t.Risk = value
-	}
 }

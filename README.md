@@ -1,76 +1,68 @@
-# Local CLI Agent
+# Automated LLM-as-a-Judge Summary Quality Evaluation Framework
 
-A local-first CLI agent for macOS / MacBook M4 that:
+A non-interactive CLI framework that evaluates AI-generated whistleblowing case summaries using a **locally hosted LLM** as an automated auditor.
 
-- uses a local Qwen/Qwen3 API on `localhost`
-- loads release skills from markdown files
-- runs safe tools through a registry
-- monitors tasks continuously using configurable intervals
-- writes reports and audit logs
-- asks consent before risky/manual actions
+## What it does
+
+For each Case ID from an input text file, the CLI:
+
+1. Authenticates against the configured API
+2. Fetches:
+   - raw case JSON
+   - generated summary text
+3. Sends both to a local LLM judge
+4. Scores three dimensions (1-5):
+   - Faithfulness
+   - Completeness
+   - Anonymity/Safety
+5. Applies configured quality thresholds
+6. Writes run artifacts to a timestamped run directory
+
+## Configuration
+
+All runtime settings are in `config.yaml` (no hardcoded URLs/credentials/thresholds):
+
+- auth endpoint + credentials
+- API base URL + endpoint routes
+- timeout/retry policy
+- input case-id file
+- output base directory
+- local LLM endpoint/model/temperature
+- quality gate thresholds
+
+Use environment variables for secrets (supported via `${VAR_NAME}` expansion in `config.yaml`), for example:
+
+```yaml
+auth:
+  username: "${API_USERNAME}"
+  password: "${API_PASSWORD}"
+```
+
+## Case ID input format
+
+`input.case_ids_file` points to a plain text file with one Case ID per line.
+
+- blank lines are ignored
+- comments prefixed with `#` are ignored
+- inline comments are supported (`CASE-1 # note`)
 
 ## Run
 
 ```bash
 go mod tidy
-go run ./cmd/agent --help
+go run ./cmd/agent --config ./config.yaml
+# or
+# go run ./cmd/agent --config ./config.yaml evaluate
 ```
 
-## Commands
+## Output artifacts
 
-```bash
-go run ./cmd/agent skill list
-go run ./cmd/agent skill run mq-health-check
-go run ./cmd/agent run "check MQ health"
-go run ./cmd/agent monitor start
-go run ./cmd/agent monitor run-once
-go run ./cmd/agent monitor run mq-health-check
-```
+Each run creates:
 
-## Build
+- `runs/run_YYYYMMDD_HHMMSS/`
+  - `<CASE_ID>/actual_case.json`
+  - `<CASE_ID>/summary.txt`
+  - `<CASE_ID>/assessment.json`
+  - `run_summary.json`
 
-```bash
-go build -o agent ./cmd/agent
-./agent monitor start
-```
-
-## Configure monitoring interval
-
-Edit `config.yaml`:
-
-```yaml
-tasks:
-  - name: "mq-health-check"
-    skill: "mq-health-check"
-    enabled: true
-    interval: "1m"
-```
-
-Supported examples: `30s`, `1m`, `5m`, `15m`, `1h`.
-
-## Skill format
-
-Skills live in `skills/release/*.md`.
-
-Each skill uses YAML front matter followed by instructions.
-
-```markdown
----
-name: mq-health-check
-version: 1.0.0
-status: release
-risk: medium
-requires_consent: false
-allowed_tools:
-  - shell.readonly
-  - http.get
-  - file.read
----
-
-# Skill: MQ Health Check
-...
-```
-
-## Safety design
-
-The LLM can suggest. The Go runtime decides. Tools execute only through an allowlisted registry. High-risk actions require human consent.
+`run_summary.json` includes per-case status: `PASSED`, `FAILED`, `TIMEOUT_ERROR`, or `ERROR`.
