@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"agent-cli/internal/config"
@@ -139,9 +141,11 @@ func TestRunContinuesAfterSingleCaseFailure(t *testing.T) {
 
 	cfg := &config.Config{
 		Auth: config.AuthConfig{
-			Endpoint: server.URL + "/auth",
-			Username: "u",
-			Password: "p",
+			Endpoint:  server.URL + "/auth",
+			GrantType: "password",
+			ClientID:  "cid",
+			Username:  "u",
+			Password:  "p",
 		},
 		API: config.APIConfig{
 			BaseURL:             server.URL + "/api",
@@ -204,5 +208,67 @@ func TestRunContinuesAfterSingleCaseFailure(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(runDir, "CASE1", "assessment.json")); err != nil {
 		t.Fatalf("missing CASE1 assessment.json: %v", err)
+	}
+}
+
+func TestAuthenticateUsesFormEncodedPayload(t *testing.T) {
+	var gotContentType string
+	var gotForm url.Values
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("Content-Type")
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		gotForm = r.Form
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"tok"}`))
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Auth: config.AuthConfig{
+			Endpoint:     server.URL,
+			GrantType:    "custom_password_grant",
+			ClientID:     "my-client",
+			ClientSecret: "my-secret",
+			Username:     "alice",
+			Password:     "s3cr3t",
+		},
+		HTTP: config.HTTPConfig{
+			ConnectTimeoutSeconds: 1,
+			ReadTimeoutSeconds:    2,
+			RetryMaxAttempts:      1,
+		},
+		LLMJudge: config.LLMJudgeConfig{
+			TimeoutSeconds: 2,
+		},
+	}
+
+	runner := NewRunner(cfg)
+	token, err := runner.authenticate(context.Background())
+	if err != nil {
+		t.Fatalf("authenticate failed: %v", err)
+	}
+	if token != "tok" {
+		t.Fatalf("expected token tok, got %q", token)
+	}
+	if !strings.HasPrefix(gotContentType, "application/x-www-form-urlencoded") {
+		t.Fatalf("expected form content type, got %q", gotContentType)
+	}
+	if gotForm.Get("grant_type") != "custom_password_grant" {
+		t.Fatalf("expected grant_type in form, got %q", gotForm.Get("grant_type"))
+	}
+	if gotForm.Get("client_id") != "my-client" {
+		t.Fatalf("expected client_id in form, got %q", gotForm.Get("client_id"))
+	}
+	if gotForm.Get("username") != "alice" {
+		t.Fatalf("expected username in form, got %q", gotForm.Get("username"))
+	}
+	if gotForm.Get("password") != "s3cr3t" {
+		t.Fatalf("expected password in form, got %q", gotForm.Get("password"))
+	}
+	if gotForm.Get("client_secret") != "my-secret" {
+		t.Fatalf("expected client_secret in form, got %q", gotForm.Get("client_secret"))
 	}
 }

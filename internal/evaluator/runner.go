@@ -10,6 +10,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -184,20 +185,20 @@ func createRunDirectory(base string, now time.Time) (string, error) {
 }
 
 func (r *Runner) authenticate(ctx context.Context) (string, error) {
-	payload := map[string]string{
-		"username": r.cfg.Auth.Username,
-		"password": r.cfg.Auth.Password,
-	}
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return "", fmt.Errorf("marshal auth payload: %w", err)
+	form := url.Values{}
+	form.Set("grant_type", r.cfg.Auth.GrantType)
+	form.Set("client_id", r.cfg.Auth.ClientID)
+	form.Set("username", r.cfg.Auth.Username)
+	form.Set("password", r.cfg.Auth.Password)
+	if r.cfg.Auth.ClientSecret != "" {
+		form.Set("client_secret", r.cfg.Auth.ClientSecret)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.cfg.Auth.Endpoint, bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.cfg.Auth.Endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", fmt.Errorf("build auth request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, body, err := r.doWithRetry(ctx, r.apiClient, req)
 	if err != nil {

@@ -1,5 +1,8 @@
 auth:
   endpoint: "http://localhost:9000/api/auth/login"
+  grant_type: "password"
+  client_id: "${API_CLIENT_ID}"
+  client_secret: "${API_CLIENT_SECRET}"
   username: "${API_USERNAME}"
   password: "${API_PASSWORD}"
 

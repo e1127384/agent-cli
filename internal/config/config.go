@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -18,9 +19,12 @@ type Config struct {
 }
 
 type AuthConfig struct {
-	Endpoint string `yaml:"endpoint"`
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
+	Endpoint     string `yaml:"endpoint"`
+	GrantType    string `yaml:"grant_type"`
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"`
+	Username     string `yaml:"username"`
+	Password     string `yaml:"password"`
 }
 
 type APIConfig struct {
@@ -78,6 +82,10 @@ func Load(path string) (*Config, error) {
 }
 
 func applyDefaults(cfg *Config) {
+	if cfg.Auth.GrantType == "" {
+		cfg.Auth.GrantType = "password"
+	}
+
 	if cfg.HTTP.ConnectTimeoutSeconds <= 0 {
 		cfg.HTTP.ConnectTimeoutSeconds = 10
 	}
@@ -110,8 +118,23 @@ func validate(cfg *Config) error {
 	if cfg.Auth.Endpoint == "" {
 		return fmt.Errorf("auth.endpoint is required")
 	}
-	if cfg.Auth.Username == "" || cfg.Auth.Password == "" {
-		return fmt.Errorf("auth.username and auth.password are required")
+	if cfg.Auth.GrantType == "" {
+		return fmt.Errorf("auth.grant_type is required")
+	}
+	if strings.EqualFold(strings.TrimSpace(cfg.Auth.GrantType), "password") {
+		missing := make([]string, 0, 3)
+		if cfg.Auth.ClientID == "" {
+			missing = append(missing, "auth.client_id")
+		}
+		if cfg.Auth.Username == "" {
+			missing = append(missing, "auth.username")
+		}
+		if cfg.Auth.Password == "" {
+			missing = append(missing, "auth.password")
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("%s are required when auth.grant_type is password", strings.Join(missing, ", "))
+		}
 	}
 	if cfg.API.BaseURL == "" {
 		return fmt.Errorf("api.base_url is required")

@@ -34,6 +34,9 @@ Use environment variables for secrets (supported via `${VAR_NAME}` expansion in 
 
 ```yaml
 auth:
+  grant_type: "password"
+  client_id: "${API_CLIENT_ID}"
+  client_secret: "${API_CLIENT_SECRET}" # optional, if required by your auth server
   username: "${API_USERNAME}"
   password: "${API_PASSWORD}"
 ```
